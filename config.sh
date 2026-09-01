@@ -34,3 +34,10 @@ export GPTQ_EXPERTS_DIR="${GPTQ_EXPERTS_DIR:-$WEIGHTS_DIR/GLM-5.2-W4-GPTQ-expert
 # ---- runtime locations (repo-local so nothing leaks onto the root disk) -----
 export VENV="${VENV:-$REPO/.venv}"
 export HF_HOME="${HF_HOME:-$REPO/.hf}"
+
+# Gated Subspace Inference is opt-in.  The runtime reads these directly; keeping
+# them centralized here makes every launcher and benchmark use the same mode.
+export GSI_MODE="${GSI_MODE:-off}"
+export GSI_IMAGE_DTYPE="${GSI_IMAGE_DTYPE:-bf16}"
+export GSI_STRICT_FALLBACK="${GSI_STRICT_FALLBACK:-1}"
+export GSI_CACHE_DIR="${GSI_CACHE_DIR:-$REPO/gsi_artifacts}"

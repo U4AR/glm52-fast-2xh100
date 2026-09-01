@@ -24,8 +24,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 #   GPTQ_INT4 CPU (nvme1) boots faster (~3min vs ~50min) but is AVX2-slow (~6.4).
 # Point MODEL/KT_WEIGHT_PATH at your downloaded weights (default: ./weights/...).
 MODEL=${MODEL:-$W4AFP8_MODEL}
-KT_METHOD=${KT_METHOD:-FP8}
+# This checkpoint's stable host fallback is the native packed INT4 payload.
+# The FP8 host loader is not equivalent on this machine and can segfault while
+# materializing cold experts (reproduced at layers 9/77 for 96/104 hot experts).
+KT_METHOD=${KT_METHOD:-RAWINT4}
 KT_WEIGHT_PATH=${KT_WEIGHT_PATH:-$MODEL}
+PORT=${PORT:-8000}
+RANDOM_SEED=${RANDOM_SEED:-}
+DETERMINISTIC=${DETERMINISTIC:-0}
 
 # OpenAI-compatible /v1/chat/completions needs a chat template. The W4AFP8 dir
 # ships no tokenizer.chat_template, so point sglang at the repo-local GLM jinja
@@ -34,6 +40,18 @@ KT_WEIGHT_PATH=${KT_WEIGHT_PATH:-$MODEL}
 CHAT_TEMPLATE=${CHAT_TEMPLATE:-$REPO/chat_template.jinja}
 
 source "$VENV/bin/activate"
+
+# Make the repo-native GSI package visible to scheduler/model worker processes.
+# The installed SGLang patch imports it lazily only when GSI_MODE != off.
+export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+
+if [ "$GSI_MODE" = "observe" ] && [ -z "${GSI_CAPTURE_DIR:-}" ]; then
+  export GSI_CAPTURE_DIR="$REPO/gsi_captures"
+fi
+if { [ "$GSI_MODE" = "functional" ] || [ "$GSI_MODE" = "kernel" ]; } && [ -z "${GSI_PROFILE:-}" ]; then
+  echo "ERROR: GSI_PROFILE is required for GSI_MODE=$GSI_MODE" >&2
+  exit 2
+fi
 
 # --- runtime env -----------------------------------------------------------
 export PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -44,7 +62,11 @@ mkdir -p "$HF_HOME"
 # RAWINT4 backend on this no-AMX EPYC: default selection picks AMXInt4_KGroup_MOE
 # (avx512_bf16-compiled). If it faults with an illegal instruction, force AVX2:
 #   export KT_RAWINT4_BACKEND=avx2
-[ -n "${KT_RAWINT4_BACKEND:-}" ] && export KT_RAWINT4_BACKEND
+if [ "$KT_METHOD" = "RAWINT4" ]; then
+  export KT_RAWINT4_BACKEND=${KT_RAWINT4_BACKEND:-avx512_packed}
+elif [ -n "${KT_RAWINT4_BACKEND:-}" ]; then
+  export KT_RAWINT4_BACKEND
+fi
 
 # --- tunables --------------------------------------------------------------
 # INT4 experts are ~half the bytes of FP8 -> less VRAM/card AND less CPU RAM,
@@ -74,6 +96,12 @@ KT_GPU_PREFILL_THRESHOLD=${KT_GPU_PREFILL_THRESHOLD:-2048}
 DISABLE_CUDA_GRAPH=${DISABLE_CUDA_GRAPH:-0}
 CUDA_GRAPH_MAX_BS=${CUDA_GRAPH_MAX_BS:-1}
 SLEEP_ON_IDLE=${SLEEP_ON_IDLE:-1}
+
+# Observe/functional mode contains Python-side capture/gating and is deliberately
+# eager.  The production graph path is capability-gated by GSI_EXPERIMENTAL_KERNEL.
+if [ "$GSI_MODE" != "off" ] && [ "$GSI_MODE" != "kernel" ] && [ "${GSI_ALLOW_CUDA_GRAPH:-0}" != "1" ]; then
+  DISABLE_CUDA_GRAPH=1
+fi
 
 CG_FLAG=""
 if [ "$DISABLE_CUDA_GRAPH" = "1" ]; then
@@ -130,6 +158,11 @@ CHAT_TEMPLATE_FLAG=""
 CONTEXT_LENGTH_FLAG=""
 [ -n "$CONTEXT_LENGTH" ] && CONTEXT_LENGTH_FLAG="--context-length $CONTEXT_LENGTH"
 
+RANDOM_SEED_FLAG=""
+[ -n "$RANDOM_SEED" ] && RANDOM_SEED_FLAG="--random-seed $RANDOM_SEED"
+DETERMINISTIC_FLAG=""
+[ "$DETERMINISTIC" = "1" ] && DETERMINISTIC_FLAG="--enable-deterministic-inference"
+
 # --- NSA (Native Sparse Attention) long-context fix --------------------------
 # GLM-5.2 uses DeepSeek Sparse Attention: a lightning indexer selects the top
 # `index_topk` (=2048) tokens per query once the sequence exceeds 2048. This
@@ -157,7 +190,7 @@ fi
 PAGE_SIZE_FLAG=""
 [ -n "${PAGE_SIZE:-}" ] && PAGE_SIZE_FLAG="--page-size $PAGE_SIZE"
 
-echo "GLM-5.2-$KT_METHOD  TP2  model=$MODEL  kt_weights=$KT_WEIGHT_PATH  gpu_experts=$GPU_EXPERTS  mem_fraction=$MEM_FRACTION  cpuinfer=$CPUINFER  cuda_graph=$([ "$DISABLE_CUDA_GRAPH" = 1 ] && echo off || echo on)  sleep_on_idle=$SLEEP_ON_IDLE  spec_decode=$([ "$SPEC_DECODE" = 1 ] && echo on || echo off)  rawint4_backend=${KT_RAWINT4_BACKEND:-auto}  nsa_prefill=${NSA_PREFILL_BACKEND:-default}"
+echo "GLM-5.2-$KT_METHOD  TP${TP_SIZE:-2}  model=$MODEL  kt_weights=$KT_WEIGHT_PATH  port=$PORT  gpu_experts=$GPU_EXPERTS  mem_fraction=$MEM_FRACTION  cpuinfer=$CPUINFER  cuda_graph=$([ "$DISABLE_CUDA_GRAPH" = 1 ] && echo off || echo on)  sleep_on_idle=$SLEEP_ON_IDLE  spec_decode=$([ "$SPEC_DECODE" = 1 ] && echo on || echo off)  rawint4_backend=${KT_RAWINT4_BACKEND:-auto}  nsa_prefill=${NSA_PREFILL_BACKEND:-default}  gsi=$GSI_MODE"
 
 python -m sglang.launch_server \
   --model-path "$MODEL" \
@@ -173,7 +206,9 @@ python -m sglang.launch_server \
   --tp-size "${TP_SIZE:-2}" \
   --trust-remote-code \
   --host 0.0.0.0 \
-  --port 8000 \
+  --port "$PORT" \
+  $RANDOM_SEED_FLAG \
+  $DETERMINISTIC_FLAG \
   --mem-fraction-static "$MEM_FRACTION" \
   --kv-cache-dtype "${KV_CACHE_DTYPE:-fp8_e4m3}" \
   --max-total-tokens "$MAX_TOTAL_TOKENS" \

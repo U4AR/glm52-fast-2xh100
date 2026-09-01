@@ -1,0 +1,9 @@
+{"id":"python_patch","prompt":"Write a Python function that parses key=value lines, rejects duplicate keys, and include three assertions."}
+{"id":"json_only","prompt":"Return only valid JSON with keys answer, assumptions, and confidence for the question: what is 17*19?"}
+{"id":"shell_safety","prompt":"Explain how to inspect disk usage in Linux without deleting files. Include safe commands only."}
+{"id":"tool_schema","prompt":"Define a JSON schema for a tool named read_file with one required absolute_path string argument. Return JSON only."}
+{"id":"debugging","prompt":"A Python service leaks file descriptors. Give a concise diagnosis plan and a minimal reproducible test."}
+{"id":"algorithm","prompt":"Implement binary search in Rust and state its loop invariant."}
+{"id":"structured","prompt":"Return a YAML list of exactly three database migration risks, each with mitigation and severity."}
+{"id":"long_reasoning","prompt":"Compare optimistic and pessimistic concurrency control for a code-review system, including failure modes."}
+

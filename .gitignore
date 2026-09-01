@@ -15,6 +15,9 @@ __pycache__/
 *.pyc
 *.log
 logs/
+gsi_artifacts/
+gsi_captures/
+gsi_reports/
 *.bak-preC
 *.bak-prepacked
 # ktransformers has its own git repo; backed up there (commit in place)
@@ -26,11 +29,14 @@ ktransformers/
 !.venv/lib/python3.12/site-packages/sglang/srt/models/deepseek_v2.py
 !.venv/lib/python3.12/site-packages/sglang/srt/layers/attention/nsa_backend.py
 !.venv/lib/python3.12/site-packages/sglang/srt/layers/moe/kt_ep_wrapper.py
+# GSI captures the routed down_proj input from inside the fused MoE GEMM.
+!.venv/lib/python3.12/site-packages/sglang/srt/layers/moe/cutlass_w4a8_moe.py
 !.venv/lib/python3.12/site-packages/kt_kernel/kt_kernel_ext.cpython-312-x86_64-linux-gnu.so
 # MTP/NEXTN-under-CUDA-graphs fixes (2026-06-30): kt verify-batch buffer
 # registration + multi-step draft warmup hook. See BLOG / memory.
 !.venv/lib/python3.12/site-packages/sglang/srt/model_executor/cuda_graph_runner.py
 !.venv/lib/python3.12/site-packages/sglang/srt/layers/attention/triton_backend.py
+!.venv/lib/python3.12/site-packages/sglang/srt/layers/attention/flashattention_backend.py
 # Per-request "intelligence" tier via OpenAI model name "<base>-topN" (2026-06-30):
 # per-token keep_k plumbed Req -> ModelWorkerBatch -> ForwardBatch -> CUDA-graph
 # buffer -> deepseek_v2 routing kernel, switchable live per request, mixed-batch.
